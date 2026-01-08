@@ -1,6 +1,7 @@
 """
 Database connection and initialization module
 """
+import os
 import aiosqlite
 from bot.config import DATABASE_PATH
 
@@ -12,6 +13,10 @@ async def get_db() -> aiosqlite.Connection:
     """Get database connection (singleton)"""
     global _db_connection
     if _db_connection is None:
+        # Create directory if not exists
+        db_dir = os.path.dirname(DATABASE_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         _db_connection = await aiosqlite.connect(DATABASE_PATH)
         _db_connection.row_factory = aiosqlite.Row
     return _db_connection
