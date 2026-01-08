@@ -7,7 +7,6 @@ import os
 import sys
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiohttp import web
 
@@ -64,10 +63,7 @@ async def on_shutdown(bot: Bot):
 async def run_polling():
     """Run bot with polling (for development)"""
     # Create bot
-    bot = Bot(
-        token=BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 
     # Create dispatcher
     dp = Dispatcher()
@@ -87,10 +83,7 @@ async def run_polling():
 async def run_webhook():
     """Run bot with webhook (for production)"""
     # Create bot
-    bot = Bot(
-        token=BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 
     # Create dispatcher
     dp = Dispatcher()
