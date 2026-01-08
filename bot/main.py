@@ -65,6 +65,10 @@ async def run_polling():
     # Create bot
     bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 
+    # Delete any existing webhook (important for switching from webhook to polling)
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Webhook deleted, starting polling...")
+
     # Create dispatcher
     dp = Dispatcher()
 
