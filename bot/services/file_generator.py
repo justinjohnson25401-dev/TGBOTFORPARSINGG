@@ -1,128 +1,214 @@
 """
-Excel file generation service for pack extraction
+Excel file service for pack files management
 """
 import os
 import io
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import openpyxl
 from openpyxl import Workbook
 
-from bot.config import TEMP_FILES_DIR, DEMO_FILE_PATH
-from bot.services.gdrive import get_file_as_bytes, ensure_temp_dir
-from bot.utils.helpers import generate_filename
+from bot.config import TEMP_FILES_DIR, DEMO_FILE_PATH, GDRIVE_BASE_FOLDER_ID, GDRIVE_DEMO_FOLDER_ID, CONTACTS_PER_PACK
+from bot.services.gdrive import get_file_as_bytes, ensure_temp_dir, list_files_in_folder, download_file
 
 logger = logging.getLogger(__name__)
 
 
-async def generate_pack_file(
-        gdrive_file_id: str,
-        pack_number: int,
-        pack_size: int,
-        city: str,
-        category: str
-) -> Optional[Tuple[str, bytes]]:
+def get_pack_filename(city: str, category: str, pack_number: int) -> str:
     """
-    Generate pack file by extracting rows from the main database file
+    Generate pack filename based on naming convention
 
-    Args:
-        gdrive_file_id: Google Drive file ID of the main database
-        pack_number: Pack number (1, 2, 3, etc.)
-        pack_size: Number of contacts in pack
-        city: City key
-        category: Category key
+    Format: {City}_{Category}_PACK_{NN}.xlsx
+    Example: Moscow_SalonKrasoty_PACK_01.xlsx
+    """
+    return f"{city}_{category}_PACK_{pack_number:02d}.xlsx"
 
-    Returns:
-        Tuple of (filename, file_bytes) or None if failed
+
+def parse_pack_filename(filename: str) -> Optional[dict]:
+    """
+    Parse pack filename to extract city, category and pack number
+
+    Returns dict with keys: city, category, pack_number or None if invalid
     """
     try:
-        logger.info(f"Generating pack {pack_number} ({pack_size} contacts) for {city}/{category}")
+        # Remove extension
+        name = filename.replace('.xlsx', '').replace('.XLSX', '')
+        parts = name.split('_')
 
-        # Download main file from Google Drive
-        file_bytes = await get_file_as_bytes(gdrive_file_id)
-        if not file_bytes:
-            logger.error("Failed to download file from Google Drive")
+        if len(parts) < 4:
             return None
 
-        # Load workbook
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
-        ws = wb.active
+        city = parts[0]
+        category = parts[1]
 
-        # Calculate row range for this pack
-        # Row 1 is header, data starts from row 2
-        start_row = (pack_number - 1) * pack_size + 2  # +2 because row 1 is header
-        end_row = start_row + pack_size - 1
+        # Find PACK part
+        pack_idx = None
+        for i, part in enumerate(parts):
+            if part.upper() == 'PACK':
+                pack_idx = i
+                break
 
-        logger.info(f"Extracting rows {start_row} to {end_row}")
+        if pack_idx is None or pack_idx + 1 >= len(parts):
+            return None
 
-        # Create new workbook for the pack
-        new_wb = Workbook()
-        new_ws = new_wb.active
+        pack_number = int(parts[pack_idx + 1])
 
-        # Copy header row
-        header_row = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
-        for col_idx, value in enumerate(header_row, 1):
-            new_ws.cell(row=1, column=col_idx, value=value)
+        return {
+            'city': city,
+            'category': category,
+            'pack_number': pack_number
+        }
+    except Exception as e:
+        logger.error(f"Error parsing filename {filename}: {e}")
+        return None
 
-        # Copy data rows
-        row_count = 0
-        for row_idx, row in enumerate(
-                ws.iter_rows(min_row=start_row, max_row=end_row, values_only=True),
-                start=2
-        ):
-            if row and any(row):  # Skip empty rows
-                for col_idx, value in enumerate(row, 1):
-                    new_ws.cell(row=row_idx, column=col_idx, value=value)
-                row_count += 1
 
-        logger.info(f"Extracted {row_count} rows")
+async def get_available_packs(city: str, category: str) -> List[dict]:
+    """
+    Get list of available pack files for city+category from Google Drive
 
-        # Generate filename
-        filename = generate_filename(city, category, pack_number, pack_size)
+    Returns list of dicts with keys: pack_number, file_id, filename
+    """
+    try:
+        files = await list_files_in_folder(GDRIVE_BASE_FOLDER_ID)
 
-        # Save to bytes
-        output = io.BytesIO()
-        new_wb.save(output)
-        output.seek(0)
+        packs = []
+        prefix = f"{city}_{category}_PACK_"
 
-        return filename, output.read()
+        for file in files:
+            filename = file.get('name', '')
+            if filename.startswith(prefix) and filename.endswith('.xlsx'):
+                parsed = parse_pack_filename(filename)
+                if parsed:
+                    packs.append({
+                        'pack_number': parsed['pack_number'],
+                        'file_id': file.get('id'),
+                        'filename': filename
+                    })
+
+        # Sort by pack number
+        packs.sort(key=lambda x: x['pack_number'])
+        return packs
 
     except Exception as e:
-        logger.error(f"Error generating pack file: {e}")
-        return None
+        logger.error(f"Error getting available packs: {e}")
+        return []
 
 
-async def generate_pack_file_to_disk(
-        gdrive_file_id: str,
-        pack_number: int,
-        pack_size: int,
-        city: str,
-        category: str
-) -> Optional[str]:
+async def download_pack_file(city: str, category: str, pack_number: int) -> Optional[Tuple[str, bytes]]:
     """
-    Generate pack file and save to disk
+    Download specific pack file from Google Drive
+
+    Args:
+        city: City code (e.g., "Moscow")
+        category: Category code (e.g., "SalonKrasoty")
+        pack_number: Pack number (1, 2, 3, etc.)
 
     Returns:
-        Path to generated file or None
+        Tuple of (filename, file_bytes) or None if not found
     """
-    result = await generate_pack_file(gdrive_file_id, pack_number, pack_size, city, category)
-    if not result:
+    try:
+        filename = get_pack_filename(city, category, pack_number)
+        logger.info(f"Downloading pack file: {filename}")
+
+        # Find file in Google Drive
+        files = await list_files_in_folder(GDRIVE_BASE_FOLDER_ID)
+
+        for file in files:
+            if file.get('name', '').upper() == filename.upper():
+                file_id = file.get('id')
+                file_bytes = await get_file_as_bytes(file_id)
+
+                if file_bytes:
+                    return filename, file_bytes
+                else:
+                    logger.error(f"Failed to download file: {filename}")
+                    return None
+
+        logger.error(f"Pack file not found: {filename}")
         return None
 
-    filename, file_bytes = result
+    except Exception as e:
+        logger.error(f"Error downloading pack file: {e}")
+        return None
 
-    ensure_temp_dir()
-    file_path = os.path.join(TEMP_FILES_DIR, filename)
 
-    with open(file_path, 'wb') as f:
-        f.write(file_bytes)
+async def get_pack_files_for_order(
+    city: str,
+    category: str,
+    pack_count: int,
+    already_purchased_packs: List[int] = None
+) -> List[Tuple[str, bytes]]:
+    """
+    Get all pack files for an order
 
-    return file_path
+    Args:
+        city: City code
+        category: Category code
+        pack_count: Number of packs to get (1 pack = 1000 contacts)
+        already_purchased_packs: List of pack numbers user already has
+
+    Returns:
+        List of (filename, file_bytes) tuples
+    """
+    if already_purchased_packs is None:
+        already_purchased_packs = []
+
+    files = []
+    available_packs = await get_available_packs(city, category)
+
+    # Find next available packs that user doesn't have
+    packs_to_download = []
+    for pack in available_packs:
+        if pack['pack_number'] not in already_purchased_packs:
+            packs_to_download.append(pack['pack_number'])
+            if len(packs_to_download) >= pack_count:
+                break
+
+    # Download each pack
+    for pack_num in packs_to_download:
+        result = await download_pack_file(city, category, pack_num)
+        if result:
+            files.append(result)
+
+    return files
+
+
+async def get_demo_file_from_gdrive() -> Optional[Tuple[str, bytes]]:
+    """
+    Get demo file from Google Drive demo folder
+
+    Returns:
+        Tuple of (filename, file_bytes) or None
+    """
+    try:
+        if not GDRIVE_DEMO_FOLDER_ID:
+            logger.warning("GDRIVE_DEMO_FOLDER_ID not configured")
+            return get_demo_file()
+
+        files = await list_files_in_folder(GDRIVE_DEMO_FOLDER_ID)
+
+        # Find DEMO.xlsx or any xlsx file
+        for file in files:
+            filename = file.get('name', '')
+            if filename.upper().endswith('.XLSX'):
+                file_id = file.get('id')
+                file_bytes = await get_file_as_bytes(file_id)
+
+                if file_bytes:
+                    return "DEMO_2GIS_Base.xlsx", file_bytes
+
+        logger.warning("No demo file found in Google Drive")
+        return get_demo_file()
+
+    except Exception as e:
+        logger.error(f"Error getting demo file from GDrive: {e}")
+        return get_demo_file()
 
 
 def get_demo_file() -> Optional[Tuple[str, bytes]]:
     """
-    Get demo file for preview
+    Get demo file for preview (local fallback)
 
     Returns:
         Tuple of (filename, file_bytes) or None
@@ -130,7 +216,7 @@ def get_demo_file() -> Optional[Tuple[str, bytes]]:
     try:
         if os.path.exists(DEMO_FILE_PATH):
             with open(DEMO_FILE_PATH, 'rb') as f:
-                return "Demo_2GIS_Base.xlsx", f.read()
+                return "DEMO_2GIS_Base.xlsx", f.read()
 
         # Generate a demo file if not exists
         return generate_demo_file()
@@ -202,36 +288,32 @@ def generate_demo_file() -> Optional[Tuple[str, bytes]]:
             f.write(output.getvalue())
 
         output.seek(0)
-        return "Demo_2GIS_Base.xlsx", output.read()
+        return "DEMO_2GIS_Base.xlsx", output.read()
 
     except Exception as e:
         logger.error(f"Error generating demo file: {e}")
         return None
 
 
-async def get_total_rows_in_file(gdrive_file_id: str) -> int:
+def get_pack_count_for_contacts(contacts: int) -> int:
+    """Calculate number of packs needed for given contact count"""
+    return contacts // CONTACTS_PER_PACK
+
+
+def get_contacts_for_packs(pack_count: int) -> int:
+    """Calculate total contacts for given pack count"""
+    return pack_count * CONTACTS_PER_PACK
+
+
+# Keep old function for backward compatibility
+async def generate_pack_file(
+        gdrive_file_id: str,
+        pack_number: int,
+        pack_size: int,
+        city: str,
+        category: str
+) -> Optional[Tuple[str, bytes]]:
     """
-    Get total number of data rows in a Google Drive Excel file
-
-    Returns:
-        Number of rows (excluding header) or 0 if failed
+    Legacy function - now just downloads pre-made pack file
     """
-    try:
-        file_bytes = await get_file_as_bytes(gdrive_file_id)
-        if not file_bytes:
-            return 0
-
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
-        ws = wb.active
-
-        # Count non-empty rows (excluding header)
-        row_count = 0
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if row and any(row):
-                row_count += 1
-
-        return row_count
-
-    except Exception as e:
-        logger.error(f"Error counting rows: {e}")
-        return 0
+    return await download_pack_file(city, category, pack_number)

@@ -9,7 +9,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-from bot.config import GDRIVE_CREDENTIALS_FILE, GDRIVE_FOLDER_ID, TEMP_FILES_DIR
+from bot.config import GDRIVE_CREDENTIALS_FILE, GDRIVE_BASE_FOLDER_ID, TEMP_FILES_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def list_files_in_folder(folder_id: str = None) -> list:
         if not service:
             return []
 
-        folder = folder_id or GDRIVE_FOLDER_ID
+        folder = folder_id or GDRIVE_BASE_FOLDER_ID
         query = f"'{folder}' in parents and trashed = false"
 
         results = service.files().list(

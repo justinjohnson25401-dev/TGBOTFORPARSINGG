@@ -4,7 +4,7 @@ Inline keyboards for the bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List, Dict, Optional
-from bot.config import CATEGORIES, PRICES
+from bot.config import CATEGORIES, PRICES, SUPPORT_USERNAME
 
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
@@ -208,7 +208,7 @@ def get_order_confirmation_keyboard(
 
 
 def get_payment_keyboard(payment_url: str, order_id: str) -> InlineKeyboardMarkup:
-    """Get payment keyboard with Prodamus link"""
+    """Get payment keyboard with YooMoney link"""
     builder = InlineKeyboardBuilder()
 
     builder.row(
@@ -219,7 +219,39 @@ def get_payment_keyboard(payment_url: str, order_id: str) -> InlineKeyboardMarku
     )
     builder.row(
         InlineKeyboardButton(
-            text="❌ Отменить заказ",
+            text="✅ Проверить оплату",
+            callback_data=f"check_payment:{order_id}"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data=f"cancel_order:{order_id}"
+        )
+    )
+
+    return builder.as_markup()
+
+
+def get_payment_check_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    """Get keyboard for checking payment status"""
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🔄 Проверить ещё раз",
+            callback_data=f"check_payment:{order_id}"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="💬 Связаться с поддержкой",
+            url=f"https://t.me/{SUPPORT_USERNAME}"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена",
             callback_data=f"cancel_order:{order_id}"
         )
     )
@@ -297,7 +329,7 @@ def get_faq_keyboard() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(
             text="💬 Написать в поддержку",
-            url="https://t.me/support"  # Replace with actual support username
+            url=f"https://t.me/{SUPPORT_USERNAME}"
         )
     )
     builder.row(
