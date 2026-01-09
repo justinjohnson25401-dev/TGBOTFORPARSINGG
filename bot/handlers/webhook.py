@@ -16,7 +16,7 @@ async def root_handler(request: web.Request) -> web.Response:
     """Root endpoint"""
     return web.Response(
         status=200,
-        text="2GIS Database Sales Bot is running",
+        text="Contact Database Sales Bot is running",
         content_type="text/plain"
     )
 

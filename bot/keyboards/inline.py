@@ -319,6 +319,7 @@ def get_faq_keyboard() -> InlineKeyboardMarkup:
         ("❓ Как часто обновляются базы?", "faq:updates"),
         ("❓ Можно ли вернуть деньги?", "faq:refund"),
         ("❓ В каком формате файл?", "faq:format"),
+        ("⚖️ Легально ли это?", "faq:legal"),
     ]
 
     for text, callback in faq_items:

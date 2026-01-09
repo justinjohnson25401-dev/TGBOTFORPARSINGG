@@ -1,5 +1,5 @@
 """
-Main entry point for the 2GIS Database Sales Bot
+Main entry point for the Contact Database Sales Bot
 """
 import asyncio
 import logging

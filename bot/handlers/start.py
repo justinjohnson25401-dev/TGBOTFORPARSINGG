@@ -44,9 +44,9 @@ def get_main_menu_text(city: str = "moskva", discount_percent: int = 0, discount
                 month = int(parts[1])
                 discount_line = f"\n🔥 АКЦИЯ: -{discount_percent}% до {day} {months[month]}"
 
-    text = f"""💎 Базы 2ГИС — Москва
+    text = f"""💎 Базы контактов — Москва
 
-🆕 Самые свежие компании из 2ГИС
+🆕 Самые свежие компании из открытых справочников
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -1,5 +1,5 @@
 """
-Configuration file for the 2GIS Database Sales Bot
+Configuration file for the Contact Database Sales Bot
 """
 import os
 from dotenv import load_dotenv

@@ -196,7 +196,7 @@ async def get_demo_file_from_gdrive() -> Optional[Tuple[str, bytes]]:
                 file_bytes = await get_file_as_bytes(file_id)
 
                 if file_bytes:
-                    return "DEMO_2GIS_Base.xlsx", file_bytes
+                    return "DEMO_Base.xlsx", file_bytes
 
         logger.warning("No demo file found in Google Drive")
         return get_demo_file()
@@ -216,7 +216,7 @@ def get_demo_file() -> Optional[Tuple[str, bytes]]:
     try:
         if os.path.exists(DEMO_FILE_PATH):
             with open(DEMO_FILE_PATH, 'rb') as f:
-                return "DEMO_2GIS_Base.xlsx", f.read()
+                return "DEMO_Base.xlsx", f.read()
 
         # Generate a demo file if not exists
         return generate_demo_file()
@@ -288,7 +288,7 @@ def generate_demo_file() -> Optional[Tuple[str, bytes]]:
             f.write(output.getvalue())
 
         output.seek(0)
-        return "DEMO_2GIS_Base.xlsx", output.read()
+        return "DEMO_Base.xlsx", output.read()
 
     except Exception as e:
         logger.error(f"Error generating demo file: {e}")
