@@ -35,37 +35,26 @@ def get_categories_keyboard(
     """
     builder = InlineKeyboardBuilder()
 
-    # Create category buttons in pairs
-    categories_list = list(CATEGORIES.items())
+    # Create category buttons - one per row for better visibility
+    for cat_key, cat_info in CATEGORIES.items():
+        emoji = cat_info["emoji"]
+        name = cat_info["name"]
 
-    for i in range(0, len(categories_list), 2):
-        row_buttons = []
-        for j in range(2):
-            if i + j < len(categories_list):
-                cat_key, cat_info = categories_list[i + j]
-                emoji = cat_info["emoji"]
-                name = cat_info["name"]
+        # Get additional info if available
+        if bases_info and cat_key in bases_info:
+            contacts = bases_info[cat_key].get("total_contacts", 5000)
+            contacts_str = f"{contacts:,}".replace(",", " ")
+            min_price = bases_info[cat_key].get("min_price", 6)
+            text = f"{emoji} {name}  {contacts_str}+ | от {min_price}₽"
+        else:
+            text = f"{emoji} {name}  5 000+ | от 6₽"
 
-                # Get additional info if available
-                if bases_info and cat_key in bases_info:
-                    contacts = bases_info[cat_key].get("total_contacts", 5000)
-                    contacts_str = f"{contacts:,}".replace(",", " ")
-                    min_price = bases_info[cat_key].get("min_price", 6)
-                    text = f"{emoji} {name}\n   {contacts_str}+ | от {min_price}₽"
-                else:
-                    text = f"{emoji} {name}\n   5 000+ | от 6₽"
-
-                row_buttons.append(
-                    InlineKeyboardButton(
-                        text=text,
-                        callback_data=f"category:{city}:{cat_key}"
-                    )
-                )
-
-        if len(row_buttons) == 2:
-            builder.row(*row_buttons)
-        elif len(row_buttons) == 1:
-            builder.row(row_buttons[0])
+        builder.row(
+            InlineKeyboardButton(
+                text=text,
+                callback_data=f"category:{city}:{cat_key}"
+            )
+        )
 
     builder.row(
         InlineKeyboardButton(
