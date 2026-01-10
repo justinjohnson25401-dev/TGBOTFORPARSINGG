@@ -65,6 +65,17 @@ async def get_all_users(include_blocked: bool = False) -> List[Dict]:
     return [dict(u) for u in users]
 
 
+async def get_recent_users(limit: int = 20) -> List[Dict]:
+    """Get recent registered users"""
+    db = await get_db()
+    cursor = await db.execute(
+        """SELECT * FROM users ORDER BY created_at DESC LIMIT ?""",
+        (limit,)
+    )
+    users = await cursor.fetchall()
+    return [dict(u) for u in users]
+
+
 async def get_users_with_notifications() -> List[Dict]:
     """Get users with notifications enabled"""
     db = await get_db()
@@ -485,3 +496,125 @@ async def get_recent_orders(limit: int = 10) -> List[Dict]:
     )
     orders = await cursor.fetchall()
     return [dict(o) for o in orders]
+
+
+# ==================== PROMO CODES ====================
+
+async def create_promo_code(
+        code: str,
+        discount_percent: int,
+        created_by: int,
+        max_uses: int = None,
+        expires_at: str = None
+) -> int:
+    """Create new promo code"""
+    db = await get_db()
+    cursor = await db.execute(
+        """INSERT INTO promo_codes (code, discount_percent, max_uses, created_by, expires_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (code.upper(), discount_percent, max_uses, created_by, expires_at)
+    )
+    await db.commit()
+    return cursor.lastrowid
+
+
+async def get_promo_code(code: str) -> Optional[Dict]:
+    """Get promo code by code string"""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM promo_codes WHERE code = ? AND is_active = TRUE",
+        (code.upper(),)
+    )
+    promo = await cursor.fetchone()
+    return dict(promo) if promo else None
+
+
+async def validate_promo_code(code: str, user_id: int) -> Dict:
+    """
+    Validate promo code for user.
+    Returns: {"valid": bool, "discount": int, "error": str or None, "promo_id": int or None}
+    """
+    promo = await get_promo_code(code)
+
+    if not promo:
+        return {"valid": False, "discount": 0, "error": "Промокод не найден", "promo_id": None}
+
+    # Check if expired
+    if promo.get("expires_at"):
+        expires = datetime.fromisoformat(promo["expires_at"])
+        if datetime.now() > expires:
+            return {"valid": False, "discount": 0, "error": "Промокод истёк", "promo_id": None}
+
+    # Check max uses
+    if promo.get("max_uses") and promo["used_count"] >= promo["max_uses"]:
+        return {"valid": False, "discount": 0, "error": "Промокод больше не действует", "promo_id": None}
+
+    # Check if user already used this code
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT id FROM promo_code_uses WHERE promo_code_id = ? AND user_id = ?",
+        (promo["id"], user_id)
+    )
+    if await cursor.fetchone():
+        return {"valid": False, "discount": 0, "error": "Вы уже использовали этот промокод", "promo_id": None}
+
+    return {
+        "valid": True,
+        "discount": promo["discount_percent"],
+        "error": None,
+        "promo_id": promo["id"]
+    }
+
+
+async def use_promo_code(promo_code_id: int, user_id: int, order_id: str, discount_amount: int):
+    """Record promo code usage"""
+    db = await get_db()
+
+    # Add usage record
+    await db.execute(
+        """INSERT INTO promo_code_uses (promo_code_id, user_id, order_id, discount_amount)
+           VALUES (?, ?, ?, ?)""",
+        (promo_code_id, user_id, order_id, discount_amount)
+    )
+
+    # Increment used_count
+    await db.execute(
+        "UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ?",
+        (promo_code_id,)
+    )
+
+    await db.commit()
+
+
+async def get_all_promo_codes() -> List[Dict]:
+    """Get all promo codes for admin"""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM promo_codes ORDER BY created_at DESC"
+    )
+    codes = await cursor.fetchall()
+    return [dict(c) for c in codes]
+
+
+async def deactivate_promo_code(promo_id: int):
+    """Deactivate promo code"""
+    db = await get_db()
+    await db.execute(
+        "UPDATE promo_codes SET is_active = FALSE WHERE id = ?",
+        (promo_id,)
+    )
+    await db.commit()
+
+
+async def get_promo_code_stats(promo_id: int) -> Dict:
+    """Get promo code usage statistics"""
+    db = await get_db()
+    cursor = await db.execute(
+        """SELECT
+               COUNT(*) as total_uses,
+               COALESCE(SUM(discount_amount), 0) as total_discount
+           FROM promo_code_uses WHERE promo_code_id = ?""",
+        (promo_id,)
+    )
+    row = await cursor.fetchone()
+    return {"total_uses": row["total_uses"], "total_discount": row["total_discount"]}

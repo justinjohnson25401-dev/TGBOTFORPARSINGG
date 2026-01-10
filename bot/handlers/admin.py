@@ -18,17 +18,26 @@ from bot.database.models import (
     get_pending_requests,
     update_request_status,
     get_all_users,
+    get_recent_users,
     set_setting,
     get_discount_percent,
     get_discount_deadline,
-    add_base
+    add_base,
+    create_promo_code,
+    get_all_promo_codes,
+    get_promo_code,
+    deactivate_promo_code,
+    get_promo_code_stats
 )
 from bot.keyboards.inline import (
     get_admin_menu_keyboard,
     get_admin_back_keyboard,
     get_admin_requests_keyboard,
     get_admin_settings_keyboard,
-    get_broadcast_confirm_keyboard
+    get_broadcast_confirm_keyboard,
+    get_admin_promo_keyboard,
+    get_admin_promo_list_keyboard,
+    get_admin_promo_view_keyboard
 )
 from bot.config import ADMIN_IDS
 from bot.utils.helpers import format_price, format_datetime, get_city_name, get_category_name
@@ -46,6 +55,9 @@ class AdminStates(StatesGroup):
     waiting_for_base_file = State()
     waiting_for_base_city = State()
     waiting_for_base_category = State()
+    waiting_for_promo_code = State()
+    waiting_for_promo_discount = State()
+    waiting_for_promo_max_uses = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -165,18 +177,44 @@ async def callback_admin_users(callback: CallbackQuery):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    users = await get_users_count()
+    users_count = await get_users_count()
+    recent_users = await get_recent_users(15)
+
+    # Build users list with clickable links
+    users_list = ""
+    for u in recent_users:
+        username = u.get("username")
+        first_name = u.get("first_name", "")
+        user_id = u["user_id"]
+        created_at = u.get("created_at", "")
+
+        if isinstance(created_at, str) and created_at:
+            try:
+                dt = datetime.fromisoformat(created_at)
+                date_str = dt.strftime("%d.%m")
+            except:
+                date_str = "—"
+        else:
+            date_str = "—"
+
+        if username:
+            users_list += f"• <a href='https://t.me/{username}'>@{username}</a> ({date_str})\n"
+        else:
+            users_list += f"• <a href='tg://user?id={user_id}'>{first_name or user_id}</a> ({date_str})\n"
 
     text = f"""👥 ПОЛЬЗОВАТЕЛИ
 
-Всего зарегистрировано: {users['total']}
-Активных (покупали за 30 дней): {users['active']}
+Всего зарегистрировано: {users_count['total']}
+Активных (покупали за 30 дней): {users_count['active']}
+Конверсия: {round(users_count['active'] / users_count['total'] * 100, 1) if users_count['total'] > 0 else 0}%
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Конверсия: {round(users['active'] / users['total'] * 100, 1) if users['total'] > 0 else 0}%"""
+📋 Последние 15 пользователей:
 
-    await callback.message.edit_text(text, reply_markup=get_admin_back_keyboard())
+{users_list}"""
+
+    await callback.message.edit_text(text, reply_markup=get_admin_back_keyboard(), disable_web_page_preview=True)
     await callback.answer()
 
 
@@ -284,9 +322,10 @@ async def callback_set_discount(callback: CallbackQuery, state: FSMContext):
 
     text = """📊 УСТАНОВКА СКИДКИ
 
-Введите процент скидки (0-50):
+Введите процент скидки (0-100):
 
-Пример: 20"""
+Пример: 20
+(100 = бесплатно, для тестирования)"""
 
     await callback.message.edit_text(text, reply_markup=get_admin_back_keyboard())
     await callback.answer()
@@ -300,8 +339,8 @@ async def process_discount(message: Message, state: FSMContext):
 
     try:
         discount = int(message.text)
-        if discount < 0 or discount > 50:
-            await message.answer("Скидка должна быть от 0 до 50%")
+        if discount < 0 or discount > 100:
+            await message.answer("Скидка должна быть от 0 до 100%")
             return
 
         await set_setting("discount_percent", str(discount))
@@ -313,7 +352,7 @@ async def process_discount(message: Message, state: FSMContext):
         )
 
     except ValueError:
-        await message.answer("Введите число от 0 до 50")
+        await message.answer("Введите число от 0 до 100")
 
 
 @router.callback_query(F.data == "admin:set_deadline")
@@ -532,8 +571,8 @@ async def cmd_set_discount(message: Message):
 
     try:
         discount = int(parts[1])
-        if discount < 0 or discount > 50:
-            await message.answer("Скидка должна быть от 0 до 50")
+        if discount < 0 or discount > 100:
+            await message.answer("Скидка должна быть от 0 до 100%")
             return
 
         await set_setting("discount_percent", str(discount))
@@ -561,3 +600,311 @@ async def cmd_set_deadline(message: Message):
 
     except ValueError:
         await message.answer("Неверный формат. Используйте ГГГГ-ММ-ДД")
+
+
+# ==================== PROMO CODES ====================
+
+@router.callback_query(F.data == "admin:promo")
+async def callback_admin_promo(callback: CallbackQuery):
+    """Show promo codes menu"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    text = """🎁 ПРОМОКОДЫ
+
+Управление промокодами для индивидуальных скидок.
+
+Промокоды можно:
+• Раздавать партнёрам
+• Использовать для тестирования
+• Давать за отзыв/рекомендацию"""
+
+    await callback.message.edit_text(text, reply_markup=get_admin_promo_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:promo_list")
+async def callback_admin_promo_list(callback: CallbackQuery):
+    """Show list of all promo codes"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    promo_codes = await get_all_promo_codes()
+
+    if not promo_codes:
+        text = """🎁 СПИСОК ПРОМОКОДОВ
+
+Промокодов пока нет.
+Нажмите "Создать промокод" чтобы добавить."""
+    else:
+        text = f"""🎁 СПИСОК ПРОМОКОДОВ
+
+Всего: {len(promo_codes)}
+
+Нажмите на промокод для просмотра деталей."""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_admin_promo_list_keyboard(promo_codes)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:promo_create")
+async def callback_admin_promo_create(callback: CallbackQuery, state: FSMContext):
+    """Start promo code creation"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_for_promo_code)
+
+    text = """➕ СОЗДАНИЕ ПРОМОКОДА
+
+Шаг 1/3: Введите код промокода
+
+• Только буквы и цифры
+• Будет преобразован в ЗАГЛАВНЫЕ
+• Пример: PARTNER10, TEST50, VIP"""
+
+    await callback.message.edit_text(text, reply_markup=get_admin_back_keyboard())
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_for_promo_code)
+async def process_promo_code_name(message: Message, state: FSMContext):
+    """Process promo code name input"""
+    if not is_admin(message.from_user.id):
+        return
+
+    code = message.text.strip().upper()
+
+    # Validate code format
+    if not code.isalnum():
+        await message.answer(
+            "❌ Код должен содержать только буквы и цифры.\nПопробуйте снова:"
+        )
+        return
+
+    if len(code) < 3 or len(code) > 20:
+        await message.answer(
+            "❌ Код должен быть от 3 до 20 символов.\nПопробуйте снова:"
+        )
+        return
+
+    # Check if code already exists
+    existing = await get_promo_code(code)
+    if existing:
+        await message.answer(
+            f"❌ Промокод {code} уже существует.\nВведите другой код:"
+        )
+        return
+
+    await state.update_data(promo_code=code)
+    await state.set_state(AdminStates.waiting_for_promo_discount)
+
+    await message.answer(
+        f"""✅ Код: {code}
+
+Шаг 2/3: Введите процент скидки (1-100)
+
+Пример: 10, 20, 50"""
+    )
+
+
+@router.message(AdminStates.waiting_for_promo_discount)
+async def process_promo_discount(message: Message, state: FSMContext):
+    """Process promo discount input"""
+    if not is_admin(message.from_user.id):
+        return
+
+    try:
+        discount = int(message.text.strip())
+        if discount < 1 or discount > 100:
+            await message.answer("❌ Скидка должна быть от 1 до 100%.\nПопробуйте снова:")
+            return
+
+        await state.update_data(promo_discount=discount)
+        await state.set_state(AdminStates.waiting_for_promo_max_uses)
+
+        await message.answer(
+            f"""✅ Скидка: {discount}%
+
+Шаг 3/3: Введите лимит использований
+
+• Введите число (например: 10, 100)
+• Или "0" для безлимитного промокода"""
+        )
+
+    except ValueError:
+        await message.answer("❌ Введите число от 1 до 100:")
+
+
+@router.message(AdminStates.waiting_for_promo_max_uses)
+async def process_promo_max_uses(message: Message, state: FSMContext):
+    """Process promo max uses input and create promo code"""
+    if not is_admin(message.from_user.id):
+        return
+
+    try:
+        max_uses = int(message.text.strip())
+        if max_uses < 0:
+            await message.answer("❌ Введите 0 или положительное число:")
+            return
+
+        data = await state.get_data()
+        code = data["promo_code"]
+        discount = data["promo_discount"]
+
+        # Create promo code
+        promo_id = await create_promo_code(
+            code=code,
+            discount_percent=discount,
+            created_by=message.from_user.id,
+            max_uses=max_uses if max_uses > 0 else None
+        )
+
+        await state.clear()
+
+        max_uses_str = str(max_uses) if max_uses > 0 else "∞ (безлимит)"
+
+        await message.answer(
+            f"""✅ ПРОМОКОД СОЗДАН!
+
+🎁 Код: {code}
+💰 Скидка: {discount}%
+🔢 Лимит: {max_uses_str}
+
+Теперь вы можете раздавать этот промокод клиентам.""",
+            reply_markup=get_admin_menu_keyboard()
+        )
+
+    except ValueError:
+        await message.answer("❌ Введите число:")
+
+
+@router.callback_query(F.data.startswith("admin:promo_view:"))
+async def callback_admin_promo_view(callback: CallbackQuery):
+    """View single promo code details"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    promo_id = int(callback.data.split(":")[2])
+
+    # Get promo code from all codes (we need to find by id)
+    promo_codes = await get_all_promo_codes()
+    promo = None
+    for p in promo_codes:
+        if p["id"] == promo_id:
+            promo = p
+            break
+
+    if not promo:
+        await callback.answer("Промокод не найден", show_alert=True)
+        return
+
+    code = promo["code"]
+    discount = promo["discount_percent"]
+    used_count = promo["used_count"]
+    max_uses = promo.get("max_uses") or "∞"
+    is_active = promo.get("is_active", True)
+    created_at = promo.get("created_at", "—")
+
+    if isinstance(created_at, str) and created_at != "—":
+        try:
+            dt = datetime.fromisoformat(created_at)
+            created_at = dt.strftime("%d.%m.%Y %H:%M")
+        except:
+            pass
+
+    status = "✅ Активен" if is_active else "❌ Деактивирован"
+
+    # Get usage stats
+    stats = await get_promo_code_stats(promo_id)
+    total_discount = stats["total_discount"]
+
+    text = f"""🎁 ПРОМОКОД: {code}
+
+Статус: {status}
+Скидка: {discount}%
+Использований: {used_count}/{max_uses}
+Создан: {created_at}
+
+📊 Статистика:
+Сэкономлено клиентами: {format_price(total_discount)}₽"""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_admin_promo_view_keyboard(promo_id, is_active)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:promo_deactivate:"))
+async def callback_admin_promo_deactivate(callback: CallbackQuery):
+    """Deactivate promo code"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    promo_id = int(callback.data.split(":")[2])
+
+    await deactivate_promo_code(promo_id)
+
+    await callback.answer("✅ Промокод деактивирован", show_alert=True)
+
+    # Refresh list
+    await callback_admin_promo_list(callback)
+
+
+@router.message(Command("promo"))
+async def cmd_promo(message: Message):
+    """Quick command to create promo code"""
+    if not is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer(
+            "Использование: /promo <КОД> <СКИДКА%> [ЛИМИТ]\n\n"
+            "Примеры:\n"
+            "/promo TEST50 50 10\n"
+            "/promo VIP20 20"
+        )
+        return
+
+    code = parts[1].upper()
+    try:
+        discount = int(parts[2])
+        max_uses = int(parts[3]) if len(parts) > 3 else None
+
+        if discount < 1 or discount > 100:
+            await message.answer("❌ Скидка должна быть от 1 до 100%")
+            return
+
+        # Check if exists
+        existing = await get_promo_code(code)
+        if existing:
+            await message.answer(f"❌ Промокод {code} уже существует")
+            return
+
+        promo_id = await create_promo_code(
+            code=code,
+            discount_percent=discount,
+            created_by=message.from_user.id,
+            max_uses=max_uses
+        )
+
+        max_str = str(max_uses) if max_uses else "∞"
+        await message.answer(
+            f"✅ Промокод создан!\n\n"
+            f"🎁 Код: {code}\n"
+            f"💰 Скидка: {discount}%\n"
+            f"🔢 Лимит: {max_str}"
+        )
+
+    except ValueError:
+        await message.answer("❌ Неверный формат. Скидка и лимит должны быть числами.")

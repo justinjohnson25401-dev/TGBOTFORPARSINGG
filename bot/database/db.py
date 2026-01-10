@@ -124,6 +124,35 @@ async def init_db():
         )
     """)
 
+    # Promo codes table
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS promo_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE NOT NULL,
+            discount_percent INTEGER NOT NULL,
+            max_uses INTEGER DEFAULT NULL,
+            used_count INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP DEFAULT NULL,
+            is_active BOOLEAN DEFAULT TRUE
+        )
+    """)
+
+    # Promo code usage tracking
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS promo_code_uses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            promo_code_id INTEGER,
+            user_id INTEGER,
+            order_id TEXT,
+            discount_amount INTEGER,
+            used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (promo_code_id) REFERENCES promo_codes(id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    """)
+
     await db.commit()
 
     # Initialize default settings

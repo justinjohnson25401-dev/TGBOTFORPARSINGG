@@ -184,7 +184,9 @@ def get_order_confirmation_keyboard(
         category: str,
         pack_size: int,
         price: int,
-        order_id: str
+        order_id: str,
+        has_promo: bool = False,
+        promo_discount: int = 0
 ) -> InlineKeyboardMarkup:
     """Get order confirmation keyboard"""
     builder = InlineKeyboardBuilder()
@@ -197,6 +199,23 @@ def get_order_confirmation_keyboard(
             callback_data=f"pay:{order_id}"
         )
     )
+
+    # Promo code button
+    if has_promo:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"✅ Промокод применён (-{promo_discount}%)",
+                callback_data="promo_applied"
+            )
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(
+                text="🎁 У меня промокод",
+                callback_data=f"promo:{order_id}"
+            )
+        )
+
     builder.row(
         InlineKeyboardButton(
             text="◀️ Изменить пакет",
@@ -213,7 +232,7 @@ def get_payment_keyboard(payment_url: str, order_id: str) -> InlineKeyboardMarku
 
     builder.row(
         InlineKeyboardButton(
-            text="💳 Перейти к оплате →",
+            text="💳 Перейти к оплате",
             url=payment_url
         )
     )
@@ -419,10 +438,11 @@ def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📝 Заявки", callback_data="admin:requests")
     )
     builder.row(
-        InlineKeyboardButton(text="➕ Добавить базу", callback_data="admin:add_base"),
+        InlineKeyboardButton(text="🎁 Промокоды", callback_data="admin:promo"),
         InlineKeyboardButton(text="📢 Рассылка", callback_data="admin:broadcast")
     )
     builder.row(
+        InlineKeyboardButton(text="➕ Добавить базу", callback_data="admin:add_base"),
         InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin:settings")
     )
 
@@ -507,4 +527,99 @@ def get_broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
             callback_data="admin:broadcast_cancel"
         )
     )
+    return builder.as_markup()
+
+
+def get_promo_cancel_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    """Get keyboard for promo code input (cancel button)"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="◀️ Отмена",
+            callback_data=f"promo_cancel:{order_id}"
+        )
+    )
+    return builder.as_markup()
+
+
+def get_admin_promo_keyboard() -> InlineKeyboardMarkup:
+    """Get admin promo codes management keyboard"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="➕ Создать промокод",
+            callback_data="admin:promo_create"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="📋 Список промокодов",
+            callback_data="admin:promo_list"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="◀️ Назад в админку",
+            callback_data="admin:menu"
+        )
+    )
+    return builder.as_markup()
+
+
+def get_admin_promo_list_keyboard(promo_codes: List[Dict]) -> InlineKeyboardMarkup:
+    """Get keyboard with promo codes list for admin"""
+    builder = InlineKeyboardBuilder()
+
+    for promo in promo_codes[:10]:
+        code = promo["code"]
+        discount = promo["discount_percent"]
+        used = promo["used_count"]
+        max_uses = promo.get("max_uses") or "∞"
+        is_active = promo.get("is_active", True)
+
+        status = "✅" if is_active else "❌"
+        text = f"{status} {code} (-{discount}%) [{used}/{max_uses}]"
+
+        builder.row(
+            InlineKeyboardButton(
+                text=text,
+                callback_data=f"admin:promo_view:{promo['id']}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="➕ Создать промокод",
+            callback_data="admin:promo_create"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data="admin:promo"
+        )
+    )
+
+    return builder.as_markup()
+
+
+def get_admin_promo_view_keyboard(promo_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    """Get keyboard for viewing single promo code"""
+    builder = InlineKeyboardBuilder()
+
+    if is_active:
+        builder.row(
+            InlineKeyboardButton(
+                text="🚫 Деактивировать",
+                callback_data=f"admin:promo_deactivate:{promo_id}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="◀️ Назад к списку",
+            callback_data="admin:promo_list"
+        )
+    )
+
     return builder.as_markup()

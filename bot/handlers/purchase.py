@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import List
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.models import (
     get_or_create_user,
@@ -22,13 +24,16 @@ from bot.database.models import (
     cancel_pending_order,
     add_purchase,
     get_purchase_by_id,
-    update_purchase_file_id
+    update_purchase_file_id,
+    validate_promo_code,
+    use_promo_code
 )
 from bot.keyboards.inline import (
     get_order_confirmation_keyboard,
     get_payment_keyboard,
     get_payment_check_keyboard,
-    get_success_payment_keyboard
+    get_success_payment_keyboard,
+    get_promo_cancel_keyboard
 )
 from bot.services.yoomoney import get_yoomoney_service
 from bot.services.file_generator import (
@@ -53,6 +58,11 @@ from bot.utils.helpers import (
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+class PromoStates(StatesGroup):
+    """Promo code input states"""
+    waiting_for_code = State()
 
 
 def get_order_confirmation_text(
@@ -499,3 +509,181 @@ async def callback_cancel_order(callback: CallbackQuery):
     text = get_main_menu_text(DEFAULT_CITY, discount_percent, discount_deadline)
 
     await callback.message.edit_text(text, reply_markup=get_main_menu_keyboard())
+
+
+# ==================== PROMO CODE HANDLERS ====================
+
+@router.callback_query(F.data.startswith("promo:"))
+async def callback_promo_input(callback: CallbackQuery, state: FSMContext):
+    """Handle promo code button - ask user to enter code"""
+    order_id = callback.data.split(":")[1]
+
+    # Save order_id to state
+    await state.update_data(promo_order_id=order_id)
+    await state.set_state(PromoStates.waiting_for_code)
+
+    text = """🎁 ВВЕДИТЕ ПРОМОКОД
+
+Введите ваш промокод:"""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_promo_cancel_keyboard(order_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("promo_cancel:"))
+async def callback_promo_cancel(callback: CallbackQuery, state: FSMContext):
+    """Cancel promo code input - return to order confirmation"""
+    order_id = callback.data.split(":")[1]
+    await state.clear()
+
+    # Get order to show confirmation again
+    order = await get_pending_order(order_id)
+    if not order:
+        await callback.answer("Заказ не найден", show_alert=True)
+        return
+
+    city = order["city"]
+    category = order["category"]
+    pack_size = order["contacts_count"]
+    price = order["price"]
+
+    # Get discount
+    discount_percent = await get_discount_percent()
+    discount_deadline = await get_discount_deadline()
+
+    if not is_discount_active(discount_deadline):
+        discount_percent = 0
+
+    base_price = PRICES.get(pack_size, price)
+
+    text = get_order_confirmation_text(
+        city=city,
+        category=category,
+        pack_size=pack_size,
+        base_price=base_price,
+        final_price=price,
+        discount_percent=discount_percent
+    )
+
+    keyboard = get_order_confirmation_keyboard(
+        city=city,
+        category=category,
+        pack_size=pack_size,
+        price=price,
+        order_id=order_id
+    )
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "promo_applied")
+async def callback_promo_applied(callback: CallbackQuery):
+    """Handle click on applied promo (do nothing)"""
+    await callback.answer("Промокод уже применён")
+
+
+@router.message(PromoStates.waiting_for_code)
+async def process_promo_code(message: Message, state: FSMContext):
+    """Process entered promo code"""
+    data = await state.get_data()
+    order_id = data.get("promo_order_id")
+
+    if not order_id:
+        await state.clear()
+        await message.answer("Ошибка: заказ не найден. Попробуйте снова.")
+        return
+
+    # Get order
+    order = await get_pending_order(order_id)
+    if not order:
+        await state.clear()
+        await message.answer("Заказ не найден или истёк. Создайте новый заказ.")
+        return
+
+    user_id = message.from_user.id
+    code = message.text.strip()
+
+    # Validate promo code
+    result = await validate_promo_code(code, user_id)
+
+    if not result["valid"]:
+        await message.answer(
+            f"❌ {result['error']}\n\nПопробуйте другой промокод или отмените ввод.",
+            reply_markup=get_promo_cancel_keyboard(order_id)
+        )
+        return
+
+    # Promo code is valid - apply discount
+    promo_discount = result["discount"]
+    promo_id = result["promo_id"]
+
+    city = order["city"]
+    category = order["category"]
+    pack_size = order["contacts_count"]
+    original_price = order["price"]
+
+    # Calculate new price with promo discount
+    # Note: original price might already have global discount
+    base_price = PRICES.get(pack_size, original_price)
+
+    # Apply promo discount on top of any existing discount
+    promo_price = int(original_price * (100 - promo_discount) / 100)
+
+    # Save promo info to state for payment
+    await state.update_data(
+        promo_id=promo_id,
+        promo_discount=promo_discount,
+        promo_price=promo_price,
+        original_order_price=original_price
+    )
+    await state.clear()
+
+    # Get global discount for display
+    discount_percent = await get_discount_percent()
+    discount_deadline = await get_discount_deadline()
+
+    if not is_discount_active(discount_deadline):
+        discount_percent = 0
+
+    # Show updated order confirmation with promo applied
+    text = f"""✅ ПРОМОКОД ПРИМЕНЁН!
+
+📦 Ваш заказ:
+
+🏙️ Город: {get_city_name(city)}
+{get_category_emoji(category)} Категория: {get_category_name(category)}
+📊 Количество: {format_price(pack_size)} контактов
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 СТОИМОСТЬ:
+
+Цена: {format_price(original_price)}₽
+🎁 Промокод (-{promo_discount}%): -{format_price(original_price - promo_price)}₽
+──────────────────────
+ИТОГО: {format_price(promo_price)}₽
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📥 ВЫ ПОЛУЧИТЕ:
+
+✅ Excel-файл с {format_price(pack_size)} контактами
+✅ Telegram у каждого (100%)
+✅ Мобильные номера (+79...)
+✅ Выдача сразу после оплаты"""
+
+    keyboard = get_order_confirmation_keyboard(
+        city=city,
+        category=category,
+        pack_size=pack_size,
+        price=promo_price,
+        order_id=order_id,
+        has_promo=True,
+        promo_discount=promo_discount
+    )
+
+    await message.answer(text, reply_markup=keyboard)
