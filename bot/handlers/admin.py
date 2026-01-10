@@ -178,7 +178,7 @@ async def callback_admin_users(callback: CallbackQuery):
         return
 
     users_count = await get_users_count()
-    recent_users = await get_recent_users(15)
+    recent_users = await get_recent_users(100)
 
     # Build users list with clickable links
     users_list = ""
@@ -210,7 +210,7 @@ async def callback_admin_users(callback: CallbackQuery):
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📋 Последние 15 пользователей:
+📋 Последние 100 пользователей:
 
 {users_list}"""
 

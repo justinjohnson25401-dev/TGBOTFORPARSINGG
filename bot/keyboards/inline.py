@@ -332,13 +332,14 @@ def get_faq_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     faq_items = [
-        ("❓ Можно ли купить другой город?", "faq:other_city"),
-        ("❓ Будут ли дубли при докупке?", "faq:duplicates"),
-        ("❓ Почему у всех Telegram?", "faq:telegram"),
-        ("❓ Как часто обновляются базы?", "faq:updates"),
-        ("❓ Можно ли вернуть деньги?", "faq:refund"),
-        ("❓ В каком формате файл?", "faq:format"),
-        ("⚖️ Легально ли это?", "faq:legal"),
+        ("🏙️ Нужен другой город или регион?", "faq:other_city"),
+        ("🔄 Будут ли повторы при докупке?", "faq:duplicates"),
+        ("💬 Зачем у всех Telegram?", "faq:telegram"),
+        ("⚖️ Это вообще легально?", "faq:legal"),
+        ("📄 Что внутри файла?", "faq:format"),
+        ("💰 Есть ли возврат денег?", "faq:refund"),
+        ("🔄 Как часто обновляются базы?", "faq:updates"),
+        ("🤝 Партнёрство", "faq:partnership"),
     ]
 
     for text, callback in faq_items:
