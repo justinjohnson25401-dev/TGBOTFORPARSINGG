@@ -8,7 +8,7 @@ from typing import Optional, Tuple, List
 import openpyxl
 from openpyxl import Workbook
 
-from bot.config import TEMP_FILES_DIR, DEMO_FILE_PATH, GDRIVE_BASE_FOLDER_ID, GDRIVE_DEMO_FOLDER_ID, CONTACTS_PER_PACK
+from bot.config import TEMP_FILES_DIR, DEMO_FILE_PATH, GDRIVE_BASE_FOLDER_ID, GDRIVE_DEMO_FOLDER_ID, CONTACTS_PER_PACK, LOCAL_PACKS_DIR
 from bot.services.gdrive import get_file_as_bytes, ensure_temp_dir, list_files_in_folder, download_file
 
 logger = logging.getLogger(__name__)
@@ -95,9 +95,40 @@ async def get_available_packs(city: str, category: str) -> List[dict]:
         return []
 
 
+def get_local_pack_file(city: str, category: str, pack_number: int) -> Optional[Tuple[str, bytes]]:
+    """
+    Get pack file from local storage
+
+    Returns:
+        Tuple of (filename, file_bytes) or None if not found
+    """
+    try:
+        filename = get_pack_filename(city, category, pack_number)
+        local_path = os.path.join(LOCAL_PACKS_DIR, filename)
+
+        if os.path.exists(local_path):
+            logger.info(f"Found local pack file: {local_path}")
+            with open(local_path, 'rb') as f:
+                return filename, f.read()
+
+        # Also check without exact case
+        if os.path.exists(LOCAL_PACKS_DIR):
+            for f in os.listdir(LOCAL_PACKS_DIR):
+                if f.upper() == filename.upper():
+                    local_path = os.path.join(LOCAL_PACKS_DIR, f)
+                    logger.info(f"Found local pack file (case-insensitive): {local_path}")
+                    with open(local_path, 'rb') as file:
+                        return filename, file.read()
+
+        return None
+    except Exception as e:
+        logger.error(f"Error reading local pack file: {e}")
+        return None
+
+
 async def download_pack_file(city: str, category: str, pack_number: int) -> Optional[Tuple[str, bytes]]:
     """
-    Download specific pack file from Google Drive
+    Get pack file - first checks local storage, then Google Drive
 
     Args:
         city: City code (e.g., "Moscow")
@@ -107,11 +138,20 @@ async def download_pack_file(city: str, category: str, pack_number: int) -> Opti
     Returns:
         Tuple of (filename, file_bytes) or None if not found
     """
-    try:
-        filename = get_pack_filename(city, category, pack_number)
-        logger.info(f"Downloading pack file: {filename}")
+    filename = get_pack_filename(city, category, pack_number)
+    logger.info(f"Looking for pack file: {filename}")
 
-        # Find file in Google Drive
+    # 1. Try local storage first
+    local_result = get_local_pack_file(city, category, pack_number)
+    if local_result:
+        return local_result
+
+    # 2. Try Google Drive
+    try:
+        if not GDRIVE_BASE_FOLDER_ID:
+            logger.warning("GDRIVE_BASE_FOLDER_ID not configured")
+            return None
+
         files = await list_files_in_folder(GDRIVE_BASE_FOLDER_ID)
 
         for file in files:
@@ -122,7 +162,7 @@ async def download_pack_file(city: str, category: str, pack_number: int) -> Opti
                 if file_bytes:
                     return filename, file_bytes
                 else:
-                    logger.error(f"Failed to download file: {filename}")
+                    logger.error(f"Failed to download file from GDrive: {filename}")
                     return None
 
         logger.error(f"Pack file not found: {filename}")

@@ -125,7 +125,7 @@ def get_category_page_keyboard(
                 elif pack_size == 5000:
                     label = " 🎉"
 
-                text = f"{pack_size} шт → {price_str}₽{label}"
+                text = f"{pack_size} шт - {price_str}₽{label}"
 
                 row_buttons.append(
                     InlineKeyboardButton(

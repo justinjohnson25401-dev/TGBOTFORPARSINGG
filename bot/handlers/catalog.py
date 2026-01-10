@@ -86,9 +86,9 @@ def get_category_page_text(
 
         if discount_percent > 0 and price < base_price:
             base_price_str = format_price(base_price)
-            prices_text += f"{pack_size} шт → {price_str}₽ (было {base_price_str}₽){label}\n"
+            prices_text += f"{pack_size} шт - {price_str}₽ (было {base_price_str}₽){label}\n"
         else:
-            prices_text += f"{pack_size} шт → {price_str}₽{label}\n"
+            prices_text += f"{pack_size} шт - {price_str}₽{label}\n"
 
     # Progress section
     progress_bar = create_progress_bar(user_purchased_contacts, total_contacts)
@@ -142,7 +142,11 @@ async def callback_catalog(callback: CallbackQuery):
     text = get_categories_text(city)
     keyboard = get_categories_keyboard(city)
 
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        # Can't edit file/photo messages, send new message instead
+        await callback.message.answer(text, reply_markup=keyboard)
     await callback.answer()
 
 
@@ -154,7 +158,10 @@ async def callback_catalog_city(callback: CallbackQuery):
     text = get_categories_text(city)
     keyboard = get_categories_keyboard(city)
 
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        await callback.message.answer(text, reply_markup=keyboard)
     await callback.answer()
 
 
@@ -212,5 +219,8 @@ async def callback_category(callback: CallbackQuery):
         discount_percent=discount_percent
     )
 
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        await callback.message.answer(text, reply_markup=keyboard)
     await callback.answer()

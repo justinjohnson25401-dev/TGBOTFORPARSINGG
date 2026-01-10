@@ -70,6 +70,7 @@ WEBHOOK_PATH = "/webhook/bot"
 # File settings
 DEMO_FILE_PATH = "bot/data/demo.xlsx"
 TEMP_FILES_DIR = "bot/data/temp"
+LOCAL_PACKS_DIR = "bot/data/packs"  # Local folder for PACK files (fallback)
 
 # Payment settings
 PAYMENT_CHECK_MINUTES = 30  # How far back to search for payments
