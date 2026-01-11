@@ -7,6 +7,7 @@ from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from bot.services.file_generator import get_demo_file
 from bot.keyboards.inline import get_demo_keyboard
 from bot.keyboards.reply import get_main_reply_keyboard
+from bot.utils.helpers import parse_callback_data
 
 router = Router()
 

@@ -154,3 +154,58 @@ def generate_filename(city: str, category: str, pack_number: int, contacts_count
     category_lat = transliterate(category_name)
 
     return f"{city_lat}_{category_lat}_pack{pack_number}_{contacts_count}.xlsx"
+
+
+# ==================== SAFE PARSING ====================
+
+def parse_callback_data(data: str, expected_parts: int, separator: str = ":") -> Optional[list]:
+    """
+    Safely parse callback data string.
+    Returns list of parts if valid, None if invalid.
+
+    Example:
+        parse_callback_data("pack:moskva:beauty:1000", 4) -> ["pack", "moskva", "beauty", "1000"]
+        parse_callback_data("pack:moskva", 4) -> None
+    """
+    if not data:
+        return None
+    parts = data.split(separator)
+    if len(parts) < expected_parts:
+        return None
+    return parts
+
+
+def safe_int(value: str, default: int = 0) -> int:
+    """
+    Safely convert string to int.
+    Returns default if conversion fails.
+    """
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def escape_html(text: str) -> str:
+    """
+    Escape HTML special characters for Telegram messages.
+    Prevents HTML injection in user-provided content.
+    """
+    if not text:
+        return ""
+    return (
+        text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def truncate_text(text: str, max_length: int = 4000) -> str:
+    """
+    Truncate text to max length (Telegram limit is 4096).
+    Adds ellipsis if truncated.
+    """
+    if not text or len(text) <= max_length:
+        return text
+    return text[:max_length - 3] + "..."

@@ -19,7 +19,9 @@ from bot.utils.helpers import (
     format_price,
     format_date,
     get_city_name,
-    get_category_name
+    get_category_name,
+    parse_callback_data,
+    safe_int
 )
 
 router = Router()
@@ -128,7 +130,15 @@ async def btn_purchases(message: Message):
 @router.callback_query(F.data.startswith("download:"))
 async def callback_download(callback: CallbackQuery):
     """Handle file download request"""
-    purchase_id = int(callback.data.split(":")[1])
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    purchase_id = safe_int(parts[1])
+    if purchase_id <= 0:
+        await callback.answer("Неверный ID покупки", show_alert=True)
+        return
 
     # Get purchase
     purchase = await get_purchase_by_id(purchase_id)

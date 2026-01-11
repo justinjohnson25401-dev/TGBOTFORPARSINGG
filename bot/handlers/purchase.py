@@ -56,7 +56,9 @@ from bot.utils.helpers import (
     format_datetime,
     create_progress_bar,
     calculate_progress_percent,
-    is_discount_active
+    is_discount_active,
+    parse_callback_data,
+    safe_int
 )
 
 router = Router()
@@ -263,10 +265,18 @@ def get_overpaid_text(expected: int, received: int) -> str:
 @router.callback_query(F.data.startswith("pack:"))
 async def callback_select_pack(callback: CallbackQuery):
     """Handle pack selection - show order confirmation"""
-    parts = callback.data.split(":")
+    parts = parse_callback_data(callback.data, 4)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
     city = parts[1]
     category = parts[2]
-    pack_size = int(parts[3])
+    pack_size = safe_int(parts[3])
+
+    if pack_size <= 0:
+        await callback.answer("Неверный размер пакета", show_alert=True)
+        return
 
     user_id = callback.from_user.id
 
@@ -322,7 +332,12 @@ async def callback_select_pack(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("pay:"))
 async def callback_pay(callback: CallbackQuery):
     """Handle pay button - show payment page with YooMoney link"""
-    order_id = callback.data.split(":")[1]
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    order_id = parts[1]
 
     # Get pending order
     order = await get_pending_order(order_id)
@@ -353,7 +368,12 @@ async def callback_pay(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("check_payment:"))
 async def callback_check_payment(callback: CallbackQuery):
     """Handle payment check - verify payment via YooMoney API"""
-    order_id = callback.data.split(":")[1]
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    order_id = parts[1]
 
     # Get pending order
     order = await get_pending_order(order_id)
@@ -531,7 +551,12 @@ async def callback_check_payment(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("cancel_order:"))
 async def callback_cancel_order(callback: CallbackQuery):
     """Handle order cancellation"""
-    order_id = callback.data.split(":")[1]
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    order_id = parts[1]
 
     await cancel_pending_order(order_id)
 
@@ -555,7 +580,12 @@ async def callback_cancel_order(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("promo:"))
 async def callback_promo_input(callback: CallbackQuery, state: FSMContext):
     """Handle promo code button - ask user to enter code"""
-    order_id = callback.data.split(":")[1]
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    order_id = parts[1]
 
     # Save order_id to state
     await state.update_data(promo_order_id=order_id)
@@ -575,7 +605,12 @@ async def callback_promo_input(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("promo_cancel:"))
 async def callback_promo_cancel(callback: CallbackQuery, state: FSMContext):
     """Cancel promo code input - return to order confirmation"""
-    order_id = callback.data.split(":")[1]
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    order_id = parts[1]
     await state.clear()
 
     # Get order to show confirmation again

@@ -10,6 +10,7 @@ from bot.keyboards.inline import (
     get_about_keyboard
 )
 from bot.keyboards.reply import get_main_reply_keyboard
+from bot.utils.helpers import parse_callback_data
 
 router = Router()
 
@@ -150,7 +151,12 @@ async def callback_faq(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("faq:"))
 async def callback_faq_answer(callback: CallbackQuery):
     """Handle FAQ answer callback"""
-    faq_key = callback.data.split(":")[1]
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    faq_key = parts[1]
 
     answer = FAQ_ANSWERS.get(faq_key, "Ответ не найден")
 

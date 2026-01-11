@@ -29,7 +29,8 @@ from bot.utils.helpers import (
     calculate_progress_percent,
     format_price,
     format_date,
-    is_discount_active
+    is_discount_active,
+    parse_callback_data
 )
 
 router = Router()
@@ -153,7 +154,12 @@ async def callback_catalog(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("catalog:"))
 async def callback_catalog_city(callback: CallbackQuery):
     """Handle catalog with specific city"""
-    city = callback.data.split(":")[1]
+    parts = parse_callback_data(callback.data, 2)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    city = parts[1]
 
     text = get_categories_text(city)
     keyboard = get_categories_keyboard(city)
@@ -168,7 +174,11 @@ async def callback_catalog_city(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("category:"))
 async def callback_category(callback: CallbackQuery):
     """Handle category selection - show category page"""
-    parts = callback.data.split(":")
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
     city = parts[1]
     category = parts[2]
 

@@ -40,7 +40,10 @@ from bot.keyboards.inline import (
     get_admin_promo_view_keyboard
 )
 from bot.config import ADMIN_IDS
-from bot.utils.helpers import format_price, format_datetime, get_city_name, get_category_name
+from bot.utils.helpers import (
+    format_price, format_datetime, get_city_name, get_category_name,
+    parse_callback_data, safe_int, escape_html, truncate_text
+)
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -265,7 +268,16 @@ async def callback_req_done(callback: CallbackQuery):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    req_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    req_id = safe_int(parts[2])
+    if req_id <= 0:
+        await callback.answer("Неверный ID заявки", show_alert=True)
+        return
+
     await update_request_status(req_id, "completed")
 
     await callback.answer(f"Заявка #{req_id} выполнена", show_alert=True)
@@ -281,7 +293,16 @@ async def callback_req_reject(callback: CallbackQuery):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    req_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    req_id = safe_int(parts[2])
+    if req_id <= 0:
+        await callback.answer("Неверный ID заявки", show_alert=True)
+        return
+
     await update_request_status(req_id, "rejected")
 
     await callback.answer(f"Заявка #{req_id} отклонена", show_alert=True)
@@ -422,6 +443,14 @@ async def callback_broadcast(callback: CallbackQuery, state: FSMContext):
 async def process_broadcast_text(message: Message, state: FSMContext):
     """Process broadcast text"""
     if not is_admin(message.from_user.id):
+        return
+
+    # Telegram message limit is 4096 characters
+    if len(message.text) > 4000:
+        await message.answer(
+            f"❌ Сообщение слишком длинное ({len(message.text)} символов).\n"
+            "Максимум: 4000 символов. Сократите текст."
+        )
         return
 
     await state.update_data(broadcast_text=message.text)
@@ -792,7 +821,15 @@ async def callback_admin_promo_view(callback: CallbackQuery):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    promo_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    promo_id = safe_int(parts[2])
+    if promo_id <= 0:
+        await callback.answer("Неверный ID промокода", show_alert=True)
+        return
 
     # Get promo code from all codes (we need to find by id)
     promo_codes = await get_all_promo_codes()
@@ -850,7 +887,15 @@ async def callback_admin_promo_deactivate(callback: CallbackQuery):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    promo_id = int(callback.data.split(":")[2])
+    parts = parse_callback_data(callback.data, 3)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    promo_id = safe_int(parts[2])
+    if promo_id <= 0:
+        await callback.answer("Неверный ID промокода", show_alert=True)
+        return
 
     await deactivate_promo_code(promo_id)
 
