@@ -26,7 +26,10 @@ from bot.database.models import (
     get_purchase_by_id,
     update_purchase_file_id,
     validate_promo_code,
-    use_promo_code
+    use_promo_code,
+    update_pending_order_price,
+    set_pending_order_processing,
+    reset_pending_order_to_pending
 )
 from bot.keyboards.inline import (
     get_order_confirmation_keyboard,
@@ -364,6 +367,7 @@ async def callback_check_payment(callback: CallbackQuery):
     pack_count = order["pack_number"]
     pack_size = order["contacts_count"]
     price = order["price"]
+    promo_code_id = order.get("promo_code_id")
 
     await callback.answer("🔍 Проверяем оплату...")
 
@@ -378,11 +382,20 @@ async def callback_check_payment(callback: CallbackQuery):
         return
 
     # Find payment
-    payment_result = await yoomoney.find_payment(
-        amount=price,
-        minutes_ago=PAYMENT_CHECK_MINUTES,
-        tolerance=PAYMENT_TOLERANCE
-    )
+    try:
+        payment_result = await yoomoney.find_payment(
+            amount=price,
+            minutes_ago=PAYMENT_CHECK_MINUTES,
+            tolerance=PAYMENT_TOLERANCE
+        )
+    except Exception as e:
+        logger.error(f"YooMoney API error for order {order_id}: {e}")
+        await callback.message.edit_text(
+            "⚠️ Ошибка при проверке оплаты. Попробуйте ещё раз через минуту.\n\n"
+            f"Если проблема повторяется — напишите в поддержку @{SUPPORT_USERNAME}",
+            reply_markup=get_payment_check_keyboard(order_id)
+        )
+        return
 
     if not payment_result["found"]:
         # Check if partial payment
@@ -397,96 +410,122 @@ async def callback_check_payment(callback: CallbackQuery):
         )
         return
 
-    # Payment found!
-    operation_id = payment_result["operation_id"]
-    actual_amount = int(payment_result["actual_amount"])
+    # Payment found! Set processing status to prevent race condition
+    if not await set_pending_order_processing(order_id):
+        # Order is already being processed or completed
+        await callback.answer("⏳ Заказ уже обрабатывается, подождите...", show_alert=True)
+        return
 
-    # Check for large overpayment
-    if payment_result.get("large_overpay"):
-        # Notify about overpayment but still process
-        await callback.message.answer(get_overpaid_text(price, actual_amount))
+    try:
+        operation_id = payment_result["operation_id"]
+        actual_amount = int(payment_result["actual_amount"])
 
-    # Get already purchased packs
-    already_purchased = await get_user_packs(user_id, city, category)
+        # Check for large overpayment
+        if payment_result.get("large_overpay"):
+            # Notify about overpayment but still process
+            await callback.message.answer(get_overpaid_text(price, actual_amount))
 
-    # Download pack files
-    files = await get_pack_files_for_order(
-        city=city,
-        category=category,
-        pack_count=pack_count,
-        already_purchased_packs=already_purchased
-    )
+        # Get already purchased packs
+        already_purchased = await get_user_packs(user_id, city, category)
 
-    if not files:
+        # Download pack files
+        files = await get_pack_files_for_order(
+            city=city,
+            category=category,
+            pack_count=pack_count,
+            already_purchased_packs=already_purchased
+        )
+
+        if not files:
+            await reset_pending_order_to_pending(order_id)
+            await callback.message.edit_text(
+                "⚠️ Оплата получена, но возникла ошибка при получении файлов.\n\n"
+                f"Напишите в поддержку @{SUPPORT_USERNAME} с номером заказа #{order_id}",
+                reply_markup=get_payment_check_keyboard(order_id)
+            )
+            return
+
+        # Send files to user
+        pack_numbers = []
+        for filename, file_bytes in files:
+            # Parse pack number from filename
+            try:
+                parts = filename.split("_PACK_")
+                if len(parts) > 1:
+                    pack_num = int(parts[1].replace(".xlsx", "").replace(".XLSX", ""))
+                    pack_numbers.append(pack_num)
+                else:
+                    pack_num = len(pack_numbers) + 1
+                    pack_numbers.append(pack_num)
+            except ValueError:
+                pack_num = len(pack_numbers) + 1
+                pack_numbers.append(pack_num)
+
+            document = BufferedInputFile(file_bytes, filename=filename)
+            sent = await callback.message.answer_document(
+                document,
+                caption=f"📥 {filename}"
+            )
+
+            # Save purchase for each pack
+            file_id = sent.document.file_id if sent.document else None
+            await add_purchase(
+                user_id=user_id,
+                city=city,
+                category=category,
+                pack_number=pack_num,
+                contacts_count=1000,  # Each pack is 1000 contacts
+                price=price // len(files) if files else price,
+                order_id=order_id,
+                file_id=file_id
+            )
+
+        # Record promo code usage if applicable
+        if promo_code_id:
+            try:
+                # Calculate original price to get discount amount
+                base_price = PRICES.get(pack_size, price)
+                discount_amount = base_price - price
+                await use_promo_code(promo_code_id, user_id, order_id, discount_amount)
+            except Exception as e:
+                logger.error(f"Failed to record promo code usage: {e}")
+
+        # Mark order as completed
+        await complete_pending_order(order_id)
+
+        # Get updated stats
+        total_contacts = await get_user_total_contacts(user_id, city, category)
+        total_spent = await get_user_total_spent(user_id)
+
+        # Get total available (assume 5000+ for now)
+        total_available = 5000
+
+        # Send success message
+        text = get_success_payment_text(
+            order_id=order_id,
+            city=city,
+            category=category,
+            pack_numbers=pack_numbers,
+            pack_size=pack_size,
+            total_contacts=total_contacts,
+            total_spent=total_spent,
+            total_available=total_available
+        )
+
+        keyboard = get_success_payment_keyboard(city, category)
+
+        await callback.message.answer(text, reply_markup=keyboard)
+
+        logger.info(f"Successfully processed payment for order {order_id}, user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error processing payment for order {order_id}: {e}")
+        await reset_pending_order_to_pending(order_id)
         await callback.message.edit_text(
-            "⚠️ Оплата получена, но возникла ошибка при получении файлов.\n\n"
+            "⚠️ Произошла ошибка при обработке заказа.\n\n"
             f"Напишите в поддержку @{SUPPORT_USERNAME} с номером заказа #{order_id}",
             reply_markup=get_payment_check_keyboard(order_id)
         )
-        return
-
-    # Send files to user
-    pack_numbers = []
-    for filename, file_bytes in files:
-        # Parse pack number from filename
-        try:
-            parts = filename.split("_PACK_")
-            if len(parts) > 1:
-                pack_num = int(parts[1].replace(".xlsx", "").replace(".XLSX", ""))
-                pack_numbers.append(pack_num)
-            else:
-                pack_num = len(pack_numbers) + 1
-                pack_numbers.append(pack_num)
-        except:
-            pack_num = len(pack_numbers) + 1
-            pack_numbers.append(pack_num)
-
-        document = BufferedInputFile(file_bytes, filename=filename)
-        sent = await callback.message.answer_document(
-            document,
-            caption=f"📥 {filename}"
-        )
-
-        # Save purchase for each pack
-        file_id = sent.document.file_id if sent.document else None
-        await add_purchase(
-            user_id=user_id,
-            city=city,
-            category=category,
-            pack_number=pack_num,
-            contacts_count=1000,  # Each pack is 1000 contacts
-            price=price // len(files) if files else price,
-            order_id=order_id,
-            file_id=file_id
-        )
-
-    # Mark order as completed
-    await complete_pending_order(order_id)
-
-    # Get updated stats
-    total_contacts = await get_user_total_contacts(user_id, city, category)
-    total_spent = await get_user_total_spent(user_id)
-
-    # Get total available (assume 5000+ for now)
-    total_available = 5000
-
-    # Send success message
-    text = get_success_payment_text(
-        order_id=order_id,
-        city=city,
-        category=category,
-        pack_numbers=pack_numbers,
-        pack_size=pack_size,
-        total_contacts=total_contacts,
-        total_spent=total_spent,
-        total_available=total_available
-    )
-
-    keyboard = get_success_payment_keyboard(city, category)
-
-    await callback.message.answer(text, reply_markup=keyboard)
-
-    logger.info(f"Successfully processed payment for order {order_id}, user {user_id}")
 
 
 @router.callback_query(F.data.startswith("cancel_order:"))
@@ -633,13 +672,10 @@ async def process_promo_code(message: Message, state: FSMContext):
     # Apply promo discount on top of any existing discount
     promo_price = int(original_price * (100 - promo_discount) / 100)
 
-    # Save promo info to state for payment
-    await state.update_data(
-        promo_id=promo_id,
-        promo_discount=promo_discount,
-        promo_price=promo_price,
-        original_order_price=original_price
-    )
+    # Save new price to database (this is the critical fix!)
+    await update_pending_order_price(order_id, promo_price, promo_id)
+
+    # Clear state after saving to DB
     await state.clear()
 
     # Get global discount for display

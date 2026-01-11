@@ -155,6 +155,23 @@ async def init_db():
 
     await db.commit()
 
+    # Add promo_code_id column to pending_orders if not exists
+    try:
+        await db.execute("ALTER TABLE pending_orders ADD COLUMN promo_code_id INTEGER")
+        await db.commit()
+    except Exception:
+        pass  # Column already exists
+
+    # Create indexes for better performance
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_user_purchases_user_id ON user_purchases(user_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_user_purchases_order_id ON user_purchases(order_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_orders_user_id ON pending_orders(user_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_orders_status ON pending_orders(status)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_custom_requests_user_id ON custom_requests(user_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_promo_code_uses_user_id ON promo_code_uses(user_id)")
+    await db.commit()
+
     # Initialize default settings
     await init_default_settings()
 

@@ -278,13 +278,23 @@ async def add_base(
 
 
 async def update_base(base_id: int, **kwargs):
-    """Update base fields"""
+    """Update base fields (whitelist approach to prevent SQL injection)"""
+    # Whitelist of allowed fields
+    ALLOWED_FIELDS = {"city", "category", "total_contacts", "pack_size", "gdrive_file_id", "updated_at", "is_active"}
+
     db = await get_db()
     fields = []
     values = []
+
     for key, value in kwargs.items():
+        if key not in ALLOWED_FIELDS:
+            raise ValueError(f"Invalid field name: {key}")
         fields.append(f"{key} = ?")
         values.append(value)
+
+    if not fields:
+        return
+
     values.append(base_id)
 
     await db.execute(
@@ -316,22 +326,62 @@ async def create_pending_order(
     await db.commit()
 
 
-async def get_pending_order(order_id: str) -> Optional[Dict]:
+async def get_pending_order(order_id: str, include_processing: bool = False) -> Optional[Dict]:
     """Get pending order by ID"""
     db = await get_db()
-    cursor = await db.execute(
-        "SELECT * FROM pending_orders WHERE order_id = ? AND status = 'pending'",
-        (order_id,)
-    )
+    if include_processing:
+        cursor = await db.execute(
+            "SELECT * FROM pending_orders WHERE order_id = ? AND status IN ('pending', 'processing')",
+            (order_id,)
+        )
+    else:
+        cursor = await db.execute(
+            "SELECT * FROM pending_orders WHERE order_id = ? AND status = 'pending'",
+            (order_id,)
+        )
     order = await cursor.fetchone()
     return dict(order) if order else None
 
 
 async def complete_pending_order(order_id: str):
-    """Mark pending order as completed"""
+    """Mark pending order as completed (works with pending or processing status)"""
     db = await get_db()
     await db.execute(
-        "UPDATE pending_orders SET status = 'completed' WHERE order_id = ?",
+        "UPDATE pending_orders SET status = 'completed' WHERE order_id = ? AND status IN ('pending', 'processing')",
+        (order_id,)
+    )
+    await db.commit()
+
+
+async def update_pending_order_price(order_id: str, new_price: int, promo_code_id: int = None):
+    """Update pending order price (when promo code applied)"""
+    db = await get_db()
+    await db.execute(
+        "UPDATE pending_orders SET price = ?, promo_code_id = ? WHERE order_id = ? AND status = 'pending'",
+        (new_price, promo_code_id, order_id)
+    )
+    await db.commit()
+
+
+async def set_pending_order_processing(order_id: str) -> bool:
+    """
+    Set pending order status to 'processing' to prevent race condition.
+    Returns True if successfully set, False if already processing/completed.
+    """
+    db = await get_db()
+    cursor = await db.execute(
+        "UPDATE pending_orders SET status = 'processing' WHERE order_id = ? AND status = 'pending'",
+        (order_id,)
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def reset_pending_order_to_pending(order_id: str):
+    """Reset order back to pending (if processing failed)"""
+    db = await get_db()
+    await db.execute(
+        "UPDATE pending_orders SET status = 'pending' WHERE order_id = ? AND status = 'processing'",
         (order_id,)
     )
     await db.commit()
