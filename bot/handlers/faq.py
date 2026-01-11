@@ -193,7 +193,6 @@ async def btn_about(message: Message):
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💬 Поддержка: @support
-📧 Email: info@example.com"""
+💬 Поддержка: @oroani"""
 
     await message.answer(text, reply_markup=get_about_keyboard())
