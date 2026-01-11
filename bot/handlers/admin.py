@@ -527,7 +527,7 @@ async def callback_add_base(callback: CallbackQuery, state: FSMContext):
 
 Для добавления базы используйте команду:
 
-/addbase <city> <category> <gdrive_id> <total_contacts>
+/addbase [city] [category] [gdrive_id] [total_contacts]
 
 Пример:
 /addbase moskva salony 1abc123def456 5000"""
@@ -545,7 +545,7 @@ async def cmd_add_base(message: Message):
     parts = message.text.split()
     if len(parts) < 5:
         await message.answer(
-            "Использование: /addbase <city> <category> <gdrive_id> <total_contacts>"
+            "Использование: /addbase [city] [category] [gdrive_id] [total_contacts]"
         )
         return
 
@@ -595,7 +595,7 @@ async def cmd_set_discount(message: Message):
 
     parts = message.text.split()
     if len(parts) < 2:
-        await message.answer("Использование: /setdiscount <percent>")
+        await message.answer("Использование: /setdiscount [percent]")
         return
 
     try:
